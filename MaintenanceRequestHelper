@@ -1,0 +1,118 @@
+public with sharing class MaintenanceRequestHelper {
+    
+    public static void updateWorkOrders(List<Case> caseList) {
+        // TODO: Complete the method to update workorders
+        // Create a list of new Cases to create
+        List<Case> newCases = new List<Case>();
+        
+        // Create a Map that is based on the getDueDate class and is used to update the Due Date of the new Cases 
+        Map<String,Integer> result=getDueDate(caseList);
+
+        //Create a list of Equipment Maintenance Items for later insert that will be related to the appropriate Maintenance Request
+        List<Equipment_Maintenance_Item__c> EMIListToinstert= new list<Equipment_Maintenance_Item__c>();
+
+        //Create a Map of Equipment Maintenance Items based on the getMaintenanceItems method
+        Map<String,List<Equipment_Maintenance_Item__c>> resultItems=getMaintenanceItems(caseList);
+
+        //Loop through the case list that was initially passed in to the method and check to see if it needs scheduled maintenance request 
+        for(Case c : caseList){
+            if(c.status=='Closed'&& (c.Type =='Repair' || c.Type=='Routine Maintenance')){ 
+                    Case newCase = new Case();
+                    newCase.Status='New';
+                    newCase.Origin='Web';
+                    newCase.Type='Routine Maintenance';
+                    newCase.Subject='Vehicle Routine Maintenance - System Created';
+                    newCase.Vehicle__c=c.Vehicle__c;
+                    newCase.ProductId=c.ProductId;
+                    newCase.Date_Reported__c=Date.TODAY();
+                    newCase.Cloned_Case_Id__c=c.Id;
+                        //Check to see if there is a value (Date Integer) returned from the getDueDate method for this Case ID
+                        if(result.get(c.Id) != null){
+                            newCase.Date_Due__c=Date.TODAY()+result.get(c.Id);
+                        }
+                        else{
+                            newCase.Date_Due__c=Date.TODAY();
+                            
+                        }
+                    newCases.add(newCase);
+            }
+        }
+    if(newCases.size()>0){
+        
+        insert newCases;
+        
+        /*Loop through newly created cases, add any EMI objects where the key is the current Case ID in the Loop to a list,
+        and check that List to see if it is empty. If it isn't, Loop through it and create new EMIs for each of our new cases
+        */
+        
+        for(Case c: newCases){
+            List<Equipment_Maintenance_Item__c> tempMaintItems = resultItems.get(c.Cloned_Case_Id__c);
+
+            if(tempMaintItems!=null){
+                for(Equipment_Maintenance_Item__c EMI:tempMaintItems){
+                    Equipment_Maintenance_Item__c newEMI = new Equipment_Maintenance_Item__c();
+                    newEMI.Equipment__c=EMI.Equipment__c;
+                    newEMI.Maintenance_Request__c=c.Id;
+                    newEMI.Quantity__c=EMI.Quantity__c;
+                    EMIListToinstert.add(newEMI);
+                }
+            }
+        }
+    }
+    //If the EMIListtoInsert has more than 0 items, insert them.
+    if(EMIListToinstert.size()>0){
+        insert EMIListToinstert;
+    }
+        
+    }
+    
+    // Get Due Date method that returns the lowest cycle days (integer) within a map based on a Case List (primarily passed in to the updateWorkOrders method)... 
+    public static Map<String,Integer> getDueDate(List<Case> CaseIDs){
+        //Create a Map to return with the Case ID as the String and the Minimum Cycle days of all related Equipment items
+        Map<String,Integer> dueDateResult = new Map<String,Integer>();
+        Map<Id,Case> caseKeys = new Map<Id,Case>(CaseIDs);
+        List<AggregateResult> EMIresult=[SELECT Maintenance_Request__r.ID cID,min(Equipment__r.Maintenance_Cycle__c)cycle 
+        FROM Equipment_Maintenance_Item__c WHERE Maintenance_Request__r.Id IN :caseKeys.keySet() AND Equipment__r.Maintenance_Cycle__c != null
+        GROUP BY Maintenance_Request__r.Id];
+
+        for(AggregateResult acr : EMIresult) {
+            Integer addDays=0;
+
+            if(acr.get('cycle')!=null){
+                addDays+=Integer.valueOf(acr.get('cycle'));
+                //Put the addDays integer and the Case Id of the current EMI of the loop into the dueDateResult Map
+                dueDateResult.put((String)acr.get('cID'),addDays);
+            }   
+        }
+        return dueDateResult;
+    }
+
+    //Get Maintenance items method 
+public static Map<String,List<Equipment_Maintenance_Item__c>> getMaintenanceItems(List<Case> CaseIDs){
+    
+    //Create the Map we are going to return from the method
+    Map<String,List<Equipment_Maintenance_Item__c>> mapOfMaintenanceItems = new map<String,List<Equipment_Maintenance_Item__c>>();
+    
+    //Create a map to house the Case IDs that were inputted into the method
+    Map<Id, Case> caseKeys = new Map<Id,Case>(CaseIDs);
+
+    //Create a List and fill it with the EMI records that are related to any case in the caseKeys key set
+    List<Equipment_Maintenance_Item__c> relatedEMIs = new List<Equipment_Maintenance_Item__c>
+    ([SELECT Id, Maintenance_Request__c, Equipment__c, Quantity__c
+    FROM Equipment_Maintenance_Item__c WHERE Maintenance_Request__r.Id IN :caseKeys.keySet()]);
+
+    //Loop through all of the related EMI records in the relatedEMIs List and sort the EMIs into the proper value set for each Case key in the return map
+    for(Equipment_Maintenance_Item__c emi : relatedEMIs){
+        if(mapOfMaintenanceItems.containsKey(emi.Maintenance_Request__c)){
+            List<Equipment_Maintenance_Item__c> tempEMIs = mapOfMaintenanceItems.get(emi.Maintenance_Request__c);
+            tempEMIs.add(emi);
+            mapOfMaintenanceItems.put(emi.Maintenance_Request__c,tempEMIs);
+        }
+        else{
+            mapOfMaintenanceItems.put(emi.Maintenance_Request__c, new List<Equipment_Maintenance_Item__c>{emi});
+        }
+    }
+    return mapOfMaintenanceItems;
+}
+    
+}

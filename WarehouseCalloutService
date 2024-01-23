@@ -1,0 +1,48 @@
+public with sharing class WarehouseCalloutService implements Queueable{
+    
+    private static final String WAREHOUSE_URL = 'https://th-superbadge-apex.herokuapp.com/equipment';
+
+    @future(callout=true)
+    public static void runWarehouseEquipmentSyc(){
+
+        Http http = new Http();
+        HttpRequest request = new HttpRequest();
+        request.setEndpoint(WAREHOUSE_URL);
+        request.setMethod('GET');
+        HttpResponse response = http.send(request);
+
+        List<Product2> warehouseEq = new List<Product2>();
+
+        if(response.getStatusCode()==200){
+            List<Object> JSONResponse = (List<Object>)JSON.deserializeUntyped(response.getBody());
+            System.debug(response.getBody());
+
+            //Loop through each line of the JSON response and get map all field names to a Product object and store it in the warehouseEq list
+            for(Object eq : JSONResponse){
+                Map<String,Object> mapJSON = (Map<String,Object>)eq;
+                
+                Product2 myEq = new Product2();
+                myEq.Replacement_Part__c = (Boolean) mapJSON.get('replacement');
+                myEq.Name = (String) mapJSON.get('name');
+                myEq.Maintenance_Cycle__c = (Integer)mapJSON.get('maintenanceperiod');
+                myEq.Lifespan_Months__c = (Integer)mapJSON.get('lifespan');
+                myEq.Cost__c = (Decimal)mapJSON.get('cost');
+                myEq.Warehouse_SKU__c = (String)mapJSON.get('sku');
+                myEq.Current_Inventory__c = (Double)mapJSON.get('quantity');
+                warehouseEq.add(myEq);
+
+
+            }
+
+            if(warehouseEq.size()>0){
+                upsert warehouseEq;
+                System.debug('Your equipment was synced with the warehouse equipment');
+                System.debug(warehouseEq);
+            }
+        }
+    }
+    }
+            //Implement the queable interface so that this can be enqueued
+    public static void execute (QueueableContext context){
+        runWarehouseEquipmentSyc();
+}
